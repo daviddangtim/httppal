@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,10 +20,11 @@ type methodHandler func (url, body string) error
 
 // rootCmd represents the base command when called without any subcommands
 var (
-	
+	// Flag variables
 	includeHeaders bool
 	method string
 	body string
+	outputFile string
 
 	rootCmd = &cobra.Command{
 	Use:   "httppal <url>",
@@ -99,6 +101,25 @@ func executeRequest(method, url, body string) error {
 		}
 		fmt.Println()
 	}
+
+
+	if outputFile == ""{
+		path := filepath.Base(request.URL.Path)
+		if path != "" && path != "/"{
+			path = "index.html"
+	}
+	outputFile = path
+	}
+
+	fi, err := os.Stat(outputFile)
+	if err == nil && fi.IsDir(){
+		return fmt.Errorf("output path %q is a directory", outputFile)
+	}
+
+	if outputFile != ""{
+		return writeToFile(outputFile, response.Body)
+	}
+
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300{
@@ -107,6 +128,17 @@ func executeRequest(method, url, body string) error {
 
 	_,err = io.Copy(os.Stdout, response.Body)
 
+	return err
+}
+
+func writeToFile(filename string, r io.Reader) error  {
+	file, err := os.Create(filename)
+	if err != nil{
+		return err
+	}
+	defer file.Close()
+
+	_,err = io.Copy(file, r)
 	return err
 }
 
@@ -121,6 +153,7 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write response body to file instead of stdout")
 	rootCmd.Flags().StringVarP(&method, "request", "X", "GET", "HTTP method to use",)
 	rootCmd.Flags().StringVarP(&body, "data", "d", "","Request body")
 	rootCmd.Flags().BoolVarP(&includeHeaders, "include", "i", false, "include response headers")
