@@ -57,16 +57,7 @@ var (
 )
 
 func dispatchRequest(method, url, body string) error  {
-	if method == ""{
-		method = http.MethodGet
-	}
-
-	if body != "" && method == ""{
-		method = http.MethodPost
-	}
-
-	method = strings.ToUpper(method)
-
+	method = normalizeMethod(method, body)
 	handler, ok := methodHandlers[method]
 	if !ok {
 		return fmt.Errorf("unsupported HTTP method %s", method)
@@ -75,63 +66,64 @@ func dispatchRequest(method, url, body string) error  {
 	return handler(url, body)
 }
 
+func normalizeMethod(method, body string) string {
+	if method == ""{
+		if body != ""{
+			return http.MethodPost
+		}
+		return http.MethodGet
+	}
+	return strings.ToUpper(method)
+}
+
 func executeRequest(method, url, body string) error {
+	request, err := requestBuilder(method, url, body)
+	if err != nil{
+		return err
+	}
+
+	response, err := sendRequest(request)
+	if err != nil{
+		return err
+	}
+	defer response.Body.Close()
+
+	return handleResponse(response)
+}
+
+func requestBuilder(method, url, body string) (*http.Request, error)  {
 	var bodyReader io.Reader
-	if body != ""{
+	if body != "" {
 		bodyReader = strings.NewReader(body)
 	}
 
-	request, err := http.NewRequest(method, url, bodyReader)
-	if err!= nil{
-		return err
+	return http.NewRequest(method, url, bodyReader)
+}
+
+func sendRequest(req *http.Request) (*http.Response, error)  {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return client.Do(req)
+}
+
+func handleResponse(resp *http.Response) error  {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300{
+		return fmt.Errorf("request failed: %s", resp.Status)
+	}
+	
+	if outputFile !=""{
+		return writeToFile(outputFile, resp.Body)
 	}
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	response, err := client.Do(request)
-	if  err != nil{
-		return err
-	}
-
-	if includeHeaders {
-		for k, v := range response.Header{
-			fmt.Printf("%s: %s\n", k, strings.Join(v,","))
-		}
-		fmt.Println()
-	}
-
-
-	if outputFile == ""{
-		path := filepath.Base(request.URL.Path)
-		if path != "" && path != "/"{
-			path = "index.html"
-	}
-	outputFile = path
-	}
-
-	fi, err := os.Stat(outputFile)
-	if err == nil && fi.IsDir(){
-		return fmt.Errorf("output path %q is a directory", outputFile)
-	}
-
-	if outputFile != ""{
-		return writeToFile(outputFile, response.Body)
-	}
-
-	defer response.Body.Close()
-
-	if response.StatusCode < 200 || response.StatusCode >= 300{
-		return fmt.Errorf("request failed :%s", response.Status)
-	}
-
-	_,err = io.Copy(os.Stdout, response.Body)
-
+	_, err := io.Copy(os.Stdout, resp.Body)
 	return err
 }
 
 func writeToFile(filename string, r io.Reader) error  {
+	fi, err := os.Stat(filename)
+	if err == nil && fi.IsDir(){
+		return fmt.Errorf("%q is a directory", filename)
+	}
+
 	file, err := os.Create(filename)
 	if err != nil{
 		return err
@@ -143,8 +135,6 @@ func writeToFile(filename string, r io.Reader) error  {
 }
 
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
